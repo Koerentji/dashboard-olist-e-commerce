@@ -33,16 +33,46 @@ kinerja penjual, metode pembayaran, dan segmentasi pelanggan.
 @st.cache_data  # Menggunakan cache agar data tidak perlu dimuat ulang setiap kali refresh
 def load_data():
     try:
+        import os
+        
+        # Mendeteksi lingkungan
+        is_cloud = os.getenv('STREAMLIT_SHARING') == 'true' or os.getenv('STREAMLIT_RUN_ON_SAVE') == 'true'
+        
+        # Set basis path berdasarkan lingkungan
+        if is_cloud:
+            # Jika di Streamlit Cloud
+            base_path = 'data'  # Relatif terhadap root repository
+        else:
+            # Jika di lingkungan lokal
+            base_path = '../data'  # Sesuai struktur asli
+
+        # Fungsi untuk mendapatkan path file yang benar
+        def get_file_path(filename):
+            # Coba beberapa kemungkinan path
+            possible_paths = [
+                os.path.join(base_path, filename),
+                os.path.join('data', filename),  # Alternatif untuk cloud
+                os.path.join('../data', filename)  # Alternatif untuk local
+            ]
+            
+            # Periksa masing-masing path
+            for path in possible_paths:
+                if os.path.exists(path):
+                    return path
+            
+            # Jika semua path gagal, gunakan path default dan biarkan error handling menanganinya
+            return os.path.join(base_path, filename)
+        
         # Memuat semua dataset
-        df_customers = pd.read_csv('../data/customers_dataset.csv')
-        df_geolocation = pd.read_csv('../data/geolocation_dataset.csv')
-        df_order_items = pd.read_csv('../data/order_items_dataset.csv')
-        df_order_payments = pd.read_csv('../data/order_payments_dataset.csv')
-        df_order_reviews = pd.read_csv('../data/order_reviews_dataset.csv')
-        df_orders = pd.read_csv('../data/orders_dataset.csv')
-        df_product_category = pd.read_csv('../data/product_category_name_translation.csv')
-        df_products = pd.read_csv('../data/products_dataset.csv')
-        df_sellers = pd.read_csv('../data/sellers_dataset.csv')
+        df_customers = pd.read_csv(get_file_path('customers_dataset.csv'))
+        df_geolocation = pd.read_csv(get_file_path('geolocation_dataset.csv'))
+        df_order_items = pd.read_csv(get_file_path('order_items_dataset.csv'))
+        df_order_payments = pd.read_csv(get_file_path('order_payments_dataset.csv'))
+        df_order_reviews = pd.read_csv(get_file_path('order_reviews_dataset.csv'))
+        df_orders = pd.read_csv(get_file_path('orders_dataset.csv'))
+        df_product_category = pd.read_csv(get_file_path('product_category_name_translation.csv'))
+        df_products = pd.read_csv(get_file_path('products_dataset.csv'))
+        df_sellers = pd.read_csv(get_file_path('sellers_dataset.csv'))
         
         # Mengkonversi kolom tanggal ke format datetime
         order_items_col = ['shipping_limit_date']
@@ -88,6 +118,7 @@ def load_data():
         }
     except Exception as e:
         st.error(f"Error loading data: {e}")
+        st.write("Path yang dicoba diakses tidak dapat ditemukan. Mohon periksa struktur direktori data.")
         return None
 
 # Memuat data dengan tampilan loading spinner
