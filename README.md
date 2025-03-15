@@ -1,4 +1,3 @@
-```markdown
 # Dashboard Analitik E-commerce Olist
 
 Dashboard ini menyediakan analisis komprehensif untuk data e-commerce Brasil dari Olist, yang mencakup berbagai aspek bisnis:
@@ -132,4 +131,3 @@ Dataset yang digunakan adalah data publik dari Olist, marketplace e-commerce Bra
 
 ## Tentang Proyek
 Proyek ini dibuat sebagai bagian dari tugas akhir kursus Data Science. Tujuannya adalah untuk menunjukkan kemampuan dalam menganalisis data e-commerce dan menghasilkan dashboard yang interaktif dan informatif untuk pengambilan keputusan bisnis.
-```
