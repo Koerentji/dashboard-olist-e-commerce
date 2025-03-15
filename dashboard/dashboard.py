@@ -1,19 +1,12 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 import plotly.express as px
 import plotly.graph_objects as go
-import datetime as dt
-from datetime import datetime
+from datetime import datetime, timedelta
 import folium
-from folium.plugins import HeatMap
-import warnings
-import squarify
 from streamlit_folium import folium_static
-
-# Mengabaikan peringatan untuk tampilan yang lebih bersih
+import warnings
 warnings.filterwarnings('ignore')
 
 # Konfigurasi halaman
@@ -22,50 +15,42 @@ st.set_page_config(page_title="Olist E-commerce Dashboard",
                    layout="wide",
                    initial_sidebar_state="expanded")
 
-# Judul dan Pengantar
-st.title("Olist E-commerce Analytics Dashboard")
-st.markdown("""
-Dashboard ini menganalisis data e-commerce Brasil dari Olist, mengeksplorasi pola geografis,
-kinerja penjual, metode pembayaran, dan segmentasi pelanggan.
-""")
-
-# Fungsi untuk memuat data
-@st.cache_data  # Menggunakan cache agar data tidak perlu dimuat ulang setiap kali refresh
-def load_data():
+# Fungsi untuk memuat data hasil analisis dari notebook.ipynb
+@st.cache_data
+def load_processed_data():
     try:
+        # Dalam aplikasi nyata, file-file ini akan dihasilkan dari notebook.ipynb
+        # Untuk demo, kita akan mencoba memuat langsung dari path data mentah
         import os
         
-        # Mendeteksi lingkungan
+        # Check if processed_data directory exists, create if it doesn't
+        if not os.path.exists('processed_data'):
+            os.makedirs('processed_data')
+            st.info("Created 'processed_data' directory. Run the notebook.ipynb first to generate processed datasets.")
+        
         is_cloud = os.getenv('STREAMLIT_SHARING') == 'true' or os.getenv('STREAMLIT_RUN_ON_SAVE') == 'true'
         
-        # Set basis path berdasarkan lingkungan
         if is_cloud:
-            # Jika di Streamlit Cloud
-            base_path = 'data'  # Relatif terhadap root repository
+            base_path = 'data'  
         else:
-            # Jika di lingkungan lokal
-            base_path = '../data'  # Sesuai struktur asli
+            base_path = '../data'  
 
-        # Fungsi untuk mendapatkan path file yang benar
         def get_file_path(filename):
-            # Coba beberapa kemungkinan path
             possible_paths = [
+                os.path.join('processed_data', filename),  # Check processed data first
                 os.path.join(base_path, filename),
-                os.path.join('data', filename),  # Alternatif untuk cloud
-                os.path.join('../data', filename)  # Alternatif untuk local
+                os.path.join('data', filename),  
+                os.path.join('../data', filename)
             ]
             
-            # Periksa masing-masing path
             for path in possible_paths:
                 if os.path.exists(path):
                     return path
-            
-            # Jika semua path gagal, gunakan path default dan biarkan error handling menanganinya
             return os.path.join(base_path, filename)
         
         # Memuat semua dataset
+        # Umumnya kita memuat data hasil proses, tapi karena belum dibuat, kita memuat data mentah
         df_customers = pd.read_csv(get_file_path('customers_dataset.csv'))
-        df_geolocation = pd.read_csv(get_file_path('geolocation_dataset.csv'))
         df_order_items = pd.read_csv(get_file_path('order_items_dataset.csv'))
         df_order_payments = pd.read_csv(get_file_path('order_payments_dataset.csv'))
         df_order_reviews = pd.read_csv(get_file_path('order_reviews_dataset.csv'))
@@ -75,819 +60,655 @@ def load_data():
         df_sellers = pd.read_csv(get_file_path('sellers_dataset.csv'))
         
         # Mengkonversi kolom tanggal ke format datetime
-        order_items_col = ['shipping_limit_date']
-        for col in order_items_col:
-            df_order_items[col] = pd.to_datetime(df_order_items[col])
-            
-        order_reviews_col = ['review_creation_date', 'review_answer_timestamp']
-        for col in order_reviews_col:
-            df_order_reviews[col] = pd.to_datetime(df_order_reviews[col])
-            
         orders_col = ['order_purchase_timestamp', 'order_approved_at', 'order_delivered_carrier_date',
-                    'order_delivered_customer_date', 'order_estimated_delivery_date']
+                      'order_delivered_customer_date', 'order_estimated_delivery_date']
         for col in orders_col:
             df_orders[col] = pd.to_datetime(df_orders[col])
         
-        # Membersihkan data duplikat pada geolocation
-        df_geolocation.drop_duplicates(inplace=True)
+        # Menggabungkan kategori produk dengan nama bahasa Inggris
+        df_products = pd.merge(
+            df_products, 
+            df_product_category, 
+            on='product_category_name', 
+            how='left'
+        )
         
-        # Mengisi nilai yang kosong (NA) pada ulasan
-        df_order_reviews["review_comment_title"] = df_order_reviews["review_comment_title"].fillna("Not Available")
-        df_order_reviews["review_comment_message"] = df_order_reviews["review_comment_message"].fillna("Not Available")
-        
-        # Mengisi nilai yang kosong (NA) pada data produk dengan nilai median
-        df_products['product_name_lenght'] = df_products['product_name_lenght'].fillna(df_products['product_name_lenght'].median())
-        df_products['product_description_lenght'] = df_products['product_description_lenght'].fillna(df_products['product_description_lenght'].median())
-        df_products['product_photos_qty'] = df_products['product_photos_qty'].fillna(df_products['product_photos_qty'].median())
-        df_products['product_weight_g'] = df_products['product_weight_g'].fillna(df_products['product_weight_g'].median())
-        df_products['product_length_cm'] = df_products['product_length_cm'].fillna(df_products['product_length_cm'].median())
-        df_products['product_height_cm'] = df_products['product_height_cm'].fillna(df_products['product_height_cm'].median())
-        df_products['product_width_cm'] = df_products['product_width_cm'].fillna(df_products['product_width_cm'].median())
-        
-        # Mengembalikan semua dataset dalam bentuk dictionary
         return {
             'customers': df_customers,
-            'geolocation': df_geolocation,
             'order_items': df_order_items,
             'order_payments': df_order_payments,
             'order_reviews': df_order_reviews,
             'orders': df_orders,
-            'product_category': df_product_category,
             'products': df_products,
             'sellers': df_sellers
         }
     except Exception as e:
         st.error(f"Error loading data: {e}")
-        st.write("Path yang dicoba diakses tidak dapat ditemukan. Mohon periksa struktur direktori data.")
         return None
 
 # Memuat data dengan tampilan loading spinner
 with st.spinner('Memuat data... Mohon tunggu.'):
-    data = load_data()
+    data = load_processed_data()
 
 # Memeriksa apakah data berhasil dimuat
 if not data:
     st.error("Gagal memuat data. Silakan periksa jalur file.")
     st.stop()
 
-# Menu sidebar untuk navigasi
-st.sidebar.title("Navigasi")
-analysis_option = st.sidebar.selectbox(
-    "Pilih Analisis",
-    ["Overview", 
-     "Geographical Purchase Patterns", 
-     "Seller Performance Analysis", 
-     "Payment Method Analysis", 
-     "RFM & Customer Segmentation"]
-)
+# ---------------------- Dashboard ----------------------
 
-# Halaman Overview - Ikhtisar dataset
-if analysis_option == "Overview":
-    st.header("Ikhtisar Dataset")
-    
-    # Menampilkan informasi dataset dalam bentuk tab
-    datasets = ["customers", "orders", "order_items", "order_payments", "sellers", "products"]
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(datasets)
-    
-    with tab1:
-        st.subheader("Dataset Pelanggan")
-        st.write(f"Ukuran: {data['customers'].shape}")
-        st.dataframe(data['customers'].head())
-        
-    with tab2:
-        st.subheader("Dataset Pesanan")
-        st.write(f"Ukuran: {data['orders'].shape}")
-        st.dataframe(data['orders'].head())
-        
-    with tab3:
-        st.subheader("Dataset Item Pesanan")
-        st.write(f"Ukuran: {data['order_items'].shape}")
-        st.dataframe(data['order_items'].head())
-        
-    with tab4:
-        st.subheader("Dataset Pembayaran Pesanan")
-        st.write(f"Ukuran: {data['order_payments'].shape}")
-        st.dataframe(data['order_payments'].head())
-        
-    with tab5:
-        st.subheader("Dataset Penjual")
-        st.write(f"Ukuran: {data['sellers'].shape}")
-        st.dataframe(data['sellers'].head())
-        
-    with tab6:
-        st.subheader("Dataset Produk")
-        st.write(f"Ukuran: {data['products'].shape}")
-        st.dataframe(data['products'].head())
-    
-    # Menampilkan informasi nilai null dan duplikat
-    st.subheader("Pemeriksaan Kualitas Data")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.write("Ringkasan Nilai Null (Kosong)")
-        null_data = {
-            'Pelanggan': data['customers'].isna().sum().sum(),
-            'Pesanan': data['orders'].isna().sum().sum(),
-            'Item Pesanan': data['order_items'].isna().sum().sum(),
-            'Pembayaran': data['order_payments'].isna().sum().sum(),
-            'Penjual': data['sellers'].isna().sum().sum(),
-            'Produk': data['products'].isna().sum().sum()
-        }
-        st.bar_chart(null_data)
-        
-    with col2:
-        st.write("Ringkasan Data Duplikat")
-        duplicate_data = {
-            'Pelanggan': data['customers'].duplicated().sum(),
-            'Pesanan': data['orders'].duplicated().sum(),
-            'Item Pesanan': data['order_items'].duplicated().sum(), 
-            'Pembayaran': data['order_payments'].duplicated().sum(),
-            'Penjual': data['sellers'].duplicated().sum(),
-            'Produk': data['products'].duplicated().sum()
-        }
-        st.bar_chart(duplicate_data)
+st.title("🛍️ Olist E-commerce Analytics Dashboard")
 
-# Analisis Pola Pembelian Geografis
-elif analysis_option == "Geographical Purchase Patterns":
-    st.header("Analisis Pola Pembelian Berdasarkan Lokasi Geografis")
+# Penjelasan dashboard
+with st.expander("ℹ️ About this Dashboard"):
+    st.markdown("""
+    Dashboard ini menampilkan hasil analisis data e-commerce Brasil dari Olist Store yang telah diolah 
+    melalui notebook.ipynb. Dashboard ini menyediakan wawasan tentang:
     
-    # Memproses data untuk analisis geografis
-    @st.cache_data
-    def prepare_geo_data():
-        # Menggabungkan data untuk mendapatkan pesanan pelanggan dengan lokasi
-        customer_orders = pd.merge(data['orders'], data['customers'], on='customer_id')
-        
-        # Menghitung nilai pesanan
-        order_values = data['order_items'].groupby('order_id').agg({'price': 'sum', 'freight_value': 'sum'}).reset_index()
-        order_values['total_value'] = order_values['price'] + order_values['freight_value']
-        
-        # Menggabungkan dengan customer_orders
-        geo_orders = pd.merge(customer_orders, order_values, on='order_id')
-        
-        # Analisis berdasarkan negara bagian (state)
-        state_orders = geo_orders.groupby('customer_state').agg({
-            'order_id': 'count',
-            'total_value': 'sum'
-        }).reset_index()
-        state_orders.columns = ['State', 'Order Count', 'Total Value']
-        state_orders = state_orders.sort_values('Total Value', ascending=False)
-        
-        # Analisis berdasarkan waktu
-        geo_orders['order_month'] = geo_orders['order_purchase_timestamp'].dt.to_period('M')
-        monthly_state_orders = geo_orders.groupby(['order_month', 'customer_state']).agg({
-            'order_id': 'count',
-            'total_value': 'sum'
-        }).reset_index()
-        
-        # Mengkonversi Period ke string untuk Plotly
-        monthly_state_orders['order_month'] = monthly_state_orders['order_month'].astype(str)
-        
-        # Analisis berdasarkan kota
-        city_orders = geo_orders.groupby(['customer_state', 'customer_city']).agg({
-            'order_id': 'count',
-            'total_value': 'sum'
-        }).reset_index()
-        city_orders = city_orders.sort_values('total_value', ascending=False)
-        
-        return {
-            'geo_orders': geo_orders,
-            'state_orders': state_orders,
-            'monthly_state_orders': monthly_state_orders,
-            'city_orders': city_orders
-        }
+    1. **Tren Penjualan**: Analisis tren penjualan dari waktu ke waktu dan berdasarkan kategori produk.
+    2. **Perilaku Pelanggan**: Analisis RFM dan segmentasi pelanggan.
+    3. **Metode Pembayaran**: Distribusi metode pembayaran yang digunakan pelanggan.
+    4. **Performa Pengiriman**: Analisis ketepatan waktu pengiriman pesanan.
+    5. **Analisis Geografis**: Distribusi pelanggan berdasarkan lokasi geografis.
     
-    geo_data = prepare_geo_data()
-    
-    # Menampilkan analisis level negara bagian
-    st.subheader("Analisis Pembelian berdasarkan Negara Bagian")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        fig1 = px.bar(
-            geo_data['state_orders'].head(10),
-            x='State',
-            y='Total Value',
-            title="10 Negara Bagian Teratas berdasarkan Nilai Pesanan Total",
-            color='Total Value',
-            color_continuous_scale="Viridis"
-        )
-        st.plotly_chart(fig1, use_container_width=True, key="geo_state_value")
-        
-    with col2:
-        fig2 = px.bar(
-            geo_data['state_orders'].head(10),
-            x='State',
-            y='Order Count',
-            title="10 Negara Bagian Teratas berdasarkan Jumlah Pesanan",
-            color='Order Count',
-            color_continuous_scale="Viridis"
-        )
-        st.plotly_chart(fig2, use_container_width=True, key="geo_state_count")
-    
-    # Tren bulanan untuk negara bagian teratas
-    st.subheader("Tren Pembelian Bulanan untuk Negara Bagian Teratas")
-    
-    # Mendapatkan 5 negara bagian teratas
-    top_states = geo_data['state_orders']['State'].head(5).tolist()
-    
-    filtered_monthly_data = geo_data['monthly_state_orders'][
-        geo_data['monthly_state_orders']['customer_state'].isin(top_states)
-    ]
-    
-    fig3 = px.line(
-        filtered_monthly_data,
-        x='order_month',
-        y='total_value',
-        color='customer_state',
-        title="Tren Pembelian Bulanan untuk 5 Negara Bagian Teratas",
-        labels={'order_month': 'Bulan', 'total_value': 'Nilai Pesanan Total', 'customer_state': 'Negara Bagian'}
-    )
-    st.plotly_chart(fig3, use_container_width=True, key="geo_monthly_trend")
-    
-    # Analisis kota
-    st.subheader("Kota Teratas berdasarkan Nilai Pesanan")
-    
-    top_cities = geo_data['city_orders'].head(10)
-    fig4 = px.bar(
-        top_cities,
-        x='customer_city',
-        y='total_value',
-        color='customer_state',
-        title="10 Kota Teratas berdasarkan Nilai Pesanan Total",
-        labels={'customer_city': 'Kota', 'total_value': 'Nilai Pesanan Total', 'customer_state': 'Negara Bagian'}
-    )
-    fig4.update_layout(xaxis={'categoryorder':'total descending'})
-    st.plotly_chart(fig4, use_container_width=True, key="geo_cities")
-    
-    # Menampilkan tabel data
-    with st.expander("Lihat Tabel Data"):
-        st.write("Data Level Negara Bagian")
-        st.dataframe(geo_data['state_orders'])
-        
-        st.write("Data Level Kota")
-        st.dataframe(geo_data['city_orders'].head(20))
+    Analisis lengkap tersedia dalam notebook.ipynb yang menyertai dashboard ini.
+    """)
 
-# Analisis Performa Penjual
-elif analysis_option == "Seller Performance Analysis":
-    st.header("Analisis Performa Penjual")
-    
-    # Memproses data untuk analisis performa penjual
-    @st.cache_data
-    def prepare_seller_data():
-        # Menggabungkan data
-        seller_orders = pd.merge(data['order_items'], data['sellers'], on='seller_id')
-        seller_reviews = pd.merge(data['orders'][['order_id']], data['order_reviews'][['order_id', 'review_score']], on='order_id')
-        seller_performance = pd.merge(seller_orders, seller_reviews, on='order_id', how='left')
-        
-        # Performa level negara bagian
-        seller_state_performance = seller_performance.groupby('seller_state').agg({
-            'order_id': 'count',
-            'price': 'sum',
-            'review_score': ['mean', 'count']
-        })
-        
-        # Meratakan kolom MultiIndex
-        seller_state_performance.columns = ['_'.join(col).strip('_') for col in seller_state_performance.columns.values]
-        seller_state_performance = seller_state_performance.reset_index()
-        seller_state_performance = seller_state_performance.sort_values('price_sum', ascending=False)
-        
-        # Performa penjual individu
-        individual_seller_performance = seller_performance.groupby('seller_id').agg({
-            'order_id': 'count',
-            'price': 'sum',
-            'review_score': ['mean', 'count']
-        })
-        
-        # Meratakan kolom MultiIndex
-        individual_seller_performance.columns = ['_'.join(col).strip('_') for col in individual_seller_performance.columns.values]
-        individual_seller_performance = individual_seller_performance.reset_index()
-        
-        # Menambahkan info lokasi
-        individual_seller_performance = pd.merge(
-            individual_seller_performance,
-            data['sellers'][['seller_id', 'seller_city', 'seller_state']],
-            on='seller_id'
-        )
-        
-        # Membuat kategori rating
-        individual_seller_performance['rating_category'] = pd.cut(
-            individual_seller_performance['review_score_mean'],
-            bins=[0, 2, 3, 4, 5],
-            labels=['1-2', '2-3', '3-4', '4-5']
-        )
-        
-        # Analisis kelompok rating
-        rating_groups = individual_seller_performance.groupby('rating_category').agg({
-            'seller_id': 'count',
-            'price_sum': 'mean',
-            'order_id_count': 'mean'
-        }).reset_index()
-        
-        return {
-            'seller_performance': seller_performance,
-            'seller_state_performance': seller_state_performance,
-            'individual_seller_performance': individual_seller_performance,
-            'rating_groups': rating_groups
-        }
-    
-    seller_data = prepare_seller_data()
-    
-    # Menampilkan performa penjual level negara bagian
-    st.subheader("Performa Penjual berdasarkan Negara Bagian")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        fig5 = px.bar(
-            seller_data['seller_state_performance'],
-            x='seller_state',
-            y='price_sum',
-            title="Total Penjualan berdasarkan Negara Bagian Penjual",
-            color='price_sum',
-            color_continuous_scale="Viridis"
-        )
-        fig5.update_layout(xaxis={'categoryorder':'total descending'})
-        st.plotly_chart(fig5, use_container_width=True, key="seller_state_sales")
-        
-    with col2:
-        fig6 = px.bar(
-            seller_data['seller_state_performance'],
-            x='seller_state',
-            y='review_score_mean',
-            title="Rata-rata Skor Ulasan berdasarkan Negara Bagian Penjual",
-            color='review_score_mean',
-            color_continuous_scale="RdYlGn"
-        )
-        fig6.update_layout(xaxis={'categoryorder':'total descending'})
-        st.plotly_chart(fig6, use_container_width=True, key="seller_state_reviews")
-    
-    # Penjual teratas
-    st.subheader("Penjual dengan Performa Terbaik")
-    
-    top_sellers = seller_data['individual_seller_performance'].sort_values('price_sum', ascending=False).head(10)
-    fig7 = px.bar(
-        top_sellers,
-        x='seller_id',
-        y='price_sum',
-        color='review_score_mean',
-        title="10 Penjual Teratas berdasarkan Total Penjualan",
-        color_continuous_scale="RdYlGn",
-        hover_data=['seller_city', 'seller_state', 'order_id_count']
-    )
-    st.plotly_chart(fig7, use_container_width=True, key="top_sellers")
-    
-    # Analisis rating
-    st.subheader("Performa berdasarkan Kategori Rating")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        fig8 = px.bar(
-            seller_data['rating_groups'],
-            x='rating_category',
-            y='seller_id',
-            title="Jumlah Penjual berdasarkan Kategori Rating",
-            labels={'seller_id': 'Jumlah Penjual', 'rating_category': 'Kategori Rating'}
-        )
-        st.plotly_chart(fig8, use_container_width=True, key="seller_rating_count")
-        
-    with col2:
-        fig9 = px.bar(
-            seller_data['rating_groups'],
-            x='rating_category',
-            y='price_sum',
-            title="Rata-rata Penjualan berdasarkan Kategori Rating",
-            labels={'price_sum': 'Rata-rata Penjualan (R$)', 'rating_category': 'Kategori Rating'}
-        )
-        st.plotly_chart(fig9, use_container_width=True, key="seller_rating_sales")
-    
-    # Analisis korelasi
-    st.subheader("Korelasi: Skor Ulasan vs Penjualan")
-    
-    fig10 = px.scatter(
-        seller_data['individual_seller_performance'],
-        x='review_score_mean',
-        y='price_sum',
-        color='order_id_count',
-        size='order_id_count',
-        title="Korelasi antara Skor Ulasan dan Penjualan",
-        labels={
-            'review_score_mean': 'Rata-rata Skor Ulasan',
-            'price_sum': 'Total Penjualan (R$)',
-            'order_id_count': 'Jumlah Pesanan'
-        }
-    )
-    st.plotly_chart(fig10, use_container_width=True, key="seller_correlation")
-    
-    correlation = seller_data['individual_seller_performance']['review_score_mean'].corr(
-        seller_data['individual_seller_performance']['price_sum']
-    )
-    st.write(f"Koefisien korelasi antara skor ulasan dan penjualan: **{correlation:.4f}**")
-    
-    # Menampilkan tabel data
-    with st.expander("Lihat Tabel Data"):
-        st.write("Performa Level Negara Bagian")
-        st.dataframe(seller_data['seller_state_performance'])
-        
-        st.write("Penjual Teratas")
-        st.dataframe(top_sellers)
-        
-        st.write("Analisis Kelompok Rating")
-        st.dataframe(seller_data['rating_groups'])
+# --------- Sidebar untuk filter ---------
+st.sidebar.title("📊 Filter Dashboard")
 
-# Analisis Metode Pembayaran
-elif analysis_option == "Payment Method Analysis":
-    st.header("Analisis Metode Pembayaran")
-    
-    # Memproses data untuk analisis pembayaran
-    @st.cache_data
-    def prepare_payment_data():
-        # Menggabungkan data
-        payment_with_orders = pd.merge(data['order_payments'], data['orders'][['order_id', 'customer_id']], on='order_id')
-        payment_with_customers = pd.merge(payment_with_orders, data['customers'][['customer_id', 'customer_state']], on='customer_id')
-        
-        # Statistik pembayaran berdasarkan jenis pembayaran
-        payment_stats = data['order_payments'].groupby('payment_type').agg({
-            'order_id': 'count',
-            'payment_value': ['mean', 'median', 'min', 'max'],
-            'payment_installments': ['mean', 'median', 'max']
-        })
-        
-        # Meratakan kolom MultiIndex
-        payment_stats.columns = ['_'.join(col).strip('_') for col in payment_stats.columns.values]
-        payment_stats = payment_stats.reset_index()
-        
-        # Metode pembayaran berdasarkan negara bagian
-        payment_by_state = payment_with_customers.groupby(['customer_state', 'payment_type']).size().reset_index(name='count')
-        payment_by_state_pivot = payment_by_state.pivot_table(
-            index='customer_state',
-            columns='payment_type',
-            values='count',
-            fill_value=0
-        )
-        
-        # Menghitung persentase
-        payment_by_state_pct = payment_by_state_pivot.div(payment_by_state_pivot.sum(axis=1), axis=0) * 100
-        payment_by_state_pct = payment_by_state_pct.reset_index()
-        
-        # Metode pembayaran paling populer berdasarkan negara bagian
-        most_popular_payment = payment_by_state_pivot.idxmax(axis=1).reset_index()
-        most_popular_payment.columns = ['customer_state', 'most_popular_payment']
-        
-        # Analisis cicilan kartu kredit
-        credit_card_payments = data['order_payments'][data['order_payments']['payment_type'] == 'credit_card']
-        avg_by_installment = credit_card_payments.groupby('payment_installments').agg({
-            'payment_value': 'mean',
-            'order_id': 'count'
-        }).reset_index()
-        
-        return {
-            'payment_with_customers': payment_with_customers,
-            'payment_stats': payment_stats,
-            'payment_by_state': payment_by_state,
-            'payment_by_state_pivot': payment_by_state_pivot,
-            'payment_by_state_pct': payment_by_state_pct,
-            'most_popular_payment': most_popular_payment,
-            'credit_card_payments': credit_card_payments,
-            'avg_by_installment': avg_by_installment
-        }
-    
-    payment_data = prepare_payment_data()
-    
-    # Distribusi metode pembayaran secara keseluruhan
-    st.subheader("Distribusi Metode Pembayaran")
-    
-    payment_count = payment_data['payment_stats'][['payment_type', 'order_id_count']]
-    fig11 = px.pie(
-        payment_count,
-        values='order_id_count',
-        names='payment_type',
-        title="Distribusi Metode Pembayaran",
-        hole=0.4,
-        color_discrete_sequence=px.colors.qualitative.Set3
-    )
-    st.plotly_chart(fig11, use_container_width=True, key="payment_distribution")
-    
-    # Statistik pembayaran
-    st.subheader("Statistik Pembayaran berdasarkan Metode")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        fig12 = px.bar(
-            payment_data['payment_stats'],
-            x='payment_type',
-            y='payment_value_mean',
-            title="Nilai Transaksi Rata-rata berdasarkan Metode Pembayaran",
-            color='payment_type'
-        )
-        st.plotly_chart(fig12, use_container_width=True, key="payment_value_by_type")
-        
-    with col2:
-        fig13 = px.bar(
-            payment_data['payment_stats'],
-            x='payment_type',
-            y='order_id_count',
-            title="Jumlah Transaksi berdasarkan Metode Pembayaran",
-            color='payment_type'
-        )
-        st.plotly_chart(fig13, use_container_width=True, key="payment_count_by_type")
-    
-    # Metode pembayaran berdasarkan negara bagian
-    st.subheader("Metode Pembayaran berdasarkan Negara Bagian")
-    
-    # Mengkonversi tabel pivot ke format panjang untuk Plotly
-    payment_by_state_long = pd.melt(
-        payment_data['payment_by_state_pivot'].reset_index(),
-        id_vars=['customer_state'],
-        var_name='payment_type',
-        value_name='count'
-    )
-    
-    fig14 = px.bar(
-        payment_by_state_long,
-        x='customer_state',
-        y='count',
-        color='payment_type',
-        title="Distribusi Metode Pembayaran berdasarkan Negara Bagian",
-        barmode='stack'
-    )
-    fig14.update_layout(xaxis={'categoryorder':'total descending'})
-    st.plotly_chart(fig14, use_container_width=True, key="payment_by_state")
-    
-    # Analisis cicilan kartu kredit
-    st.subheader("Analisis Cicilan Kartu Kredit")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        fig15 = px.bar(
-            payment_data['avg_by_installment'],
-            x='payment_installments',
-            y='payment_value',
-            title="Nilai Transaksi Rata-rata berdasarkan Jumlah Cicilan",
-            color='payment_installments'
-        )
-        st.plotly_chart(fig15, use_container_width=True, key="installment_value")
-        
-    with col2:
-        fig16 = px.bar(
-            payment_data['avg_by_installment'],
-            x='payment_installments',
-            y='order_id',
-            title="Jumlah Transaksi berdasarkan Jumlah Cicilan",
-            color='payment_installments'
-        )
-        st.plotly_chart(fig16, use_container_width=True, key="installment_count")
-    
-    # Grafik scatter plot jumlah cicilan vs nilai transaksi
-    fig17 = px.scatter(
-        payment_data['credit_card_payments'],
-        x='payment_installments',
-        y='payment_value',
-        title="Korelasi antara Jumlah Cicilan dan Nilai Transaksi",
-        opacity=0.6,
-        color_discrete_sequence=['#1f77b4']
-    )
-    
-    # Menambahkan garis tren
-    fig17.update_layout(
-        shapes=[
-            dict(
-                type='line',
-                yref='y',
-                xref='x',
-                y0=payment_data['credit_card_payments']['payment_value'].min(),
-                y1=payment_data['credit_card_payments']['payment_value'].max(),
-                x0=payment_data['credit_card_payments']['payment_installments'].min(),
-                x1=payment_data['credit_card_payments']['payment_installments'].max(),
-                line=dict(
-                    color='red',
-                    width=2,
-                    dash='dash'
-                )
-            )
-        ]
-    )
-    
-    st.plotly_chart(fig17, use_container_width=True, key="installment_correlation")
-    
-    # Menghitung korelasi
-    installment_corr = payment_data['credit_card_payments']['payment_installments'].corr(
-        payment_data['credit_card_payments']['payment_value']
-    )
-    st.write(f"Koefisien korelasi antara jumlah cicilan dan nilai transaksi: **{installment_corr:.4f}**")
-    
-    # Menampilkan tabel data
-    with st.expander("Lihat Tabel Data"):
-        st.write("Statistik Metode Pembayaran")
-        st.dataframe(payment_data['payment_stats'])
-        
-        st.write("Metode Pembayaran Paling Populer berdasarkan Negara Bagian")
-        st.dataframe(payment_data['most_popular_payment'])
-        
-        st.write("Analisis Cicilan Kartu Kredit")
-        st.dataframe(payment_data['avg_by_installment'])
+# Setup for date filters
+min_date = data['orders']['order_purchase_timestamp'].min()
+max_date = data['orders']['order_purchase_timestamp'].max()
 
-# Analisis RFM dan Segmentasi Pelanggan
-else:  # RFM & Customer Segmentation
-    st.header("Analisis RFM & Segmentasi Pelanggan")
+# Filter date range
+with st.sidebar.expander("🗓️ Tanggal", expanded=True):
+    # Option to choose preset periods or custom
+    date_option = st.radio(
+        "Pilih Rentang Waktu:",
+        ["Semua Data", "Tahun Terakhir", "6 Bulan Terakhir", "3 Bulan Terakhir", "Kustom"]
+    )
     
-    # Memproses data untuk analisis RFM
-    @st.cache_data
-    def prepare_rfm_data():
-        # Menggabungkan pesanan dengan pembayaran untuk nilai transaksi
-        order_payments = data['order_payments'].groupby('order_id')['payment_value'].sum().reset_index()
-        orders_with_payments = pd.merge(data['orders'], order_payments, on='order_id')
+    if date_option == "Semua Data":
+        start_date = min_date
+        end_date = max_date
+    elif date_option == "Tahun Terakhir":
+        start_date = max_date - timedelta(days=365)
+        end_date = max_date
+    elif date_option == "6 Bulan Terakhir":
+        start_date = max_date - timedelta(days=180)
+        end_date = max_date
+    elif date_option == "3 Bulan Terakhir":
+        start_date = max_date - timedelta(days=90)
+        end_date = max_date
+    else:  # Custom
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("Tanggal Mulai", min_date)
+        with col2:
+            end_date = st.date_input("Tanggal Akhir", max_date)
         
-        # Mendapatkan tanggal maksimum untuk perhitungan recency
-        max_date = data['orders']['order_purchase_timestamp'].max()
-        
-        # Menghitung RFM
-        rfm = orders_with_payments.groupby('customer_id').agg({
-            'order_purchase_timestamp': lambda x: (max_date - x.max()).days,  # Recency
-            'order_id': 'count',  # Frequency
-            'payment_value': 'sum'  # Monetary
-        }).reset_index()
-        
-        rfm.columns = ['customer_id', 'recency', 'frequency', 'monetary']
-        
-        # Membuat kuintil
-        rfm['r_score'] = pd.qcut(rfm['recency'], q=5, labels=[5, 4, 3, 2, 1])  # 5 adalah yang terbaru
-        rfm['f_score'] = pd.qcut(rfm['frequency'].rank(method='first'), q=5, labels=[1, 2, 3, 4, 5])  # 5 adalah yang paling sering
-        rfm['m_score'] = pd.qcut(rfm['monetary'].rank(method='first'), q=5, labels=[1, 2, 3, 4, 5])  # 5 adalah nilai tertinggi
-        
-        # Menggabungkan skor
-        rfm['rfm_score'] = rfm['r_score'].astype(str) + rfm['f_score'].astype(str) + rfm['m_score'].astype(str)
-        
-        # Membuat segmen
-        def get_segment(rfm_score):
-            r = int(rfm_score[0])
-            f = int(rfm_score[1])
-            m = int(rfm_score[2])
+        start_date = pd.to_datetime(start_date)
+        end_date = pd.to_datetime(end_date)
 
-            if r >= 4 and f >= 4 and m >= 4:
-                return 'Champions'
-            elif r >= 3 and f >= 3 and m >= 3:
-                return 'Loyal Customers'
-            elif r >= 3 and f >= 1 and m >= 2:
-                return 'Potential Loyalists'
-            elif r >= 4 and f <= 2 and m <= 2:
-                return 'New Customers'
-            elif r < 2 and f > 2 and m > 2:
-                return 'At Risk'
-            elif r < 2 and f <= 2 and m <= 2:
-                return 'Hibernating'
-            elif r >= 2 and f <= 2 and m <= 2:
-                return 'Needs Attention'
-            else:
-                return 'Others'
-        
-        rfm['segment'] = rfm['rfm_score'].apply(get_segment)
-        
-        # Ringkasan segmen
-        segment_summary = rfm.groupby('segment').agg({
-            'customer_id': 'count',
-            'recency': 'mean',
-            'frequency': 'mean',
-            'monetary': 'mean'
-        }).reset_index()
-        
-        segment_summary = segment_summary.sort_values('monetary', ascending=False)
-        
-        # Menambahkan data lokasi
-        rfm_with_location = pd.merge(rfm, data['customers'][['customer_id', 'customer_state', 'customer_city']], on='customer_id')
-        
-        # Distribusi segmen berdasarkan negara bagian
-        segment_by_state = rfm_with_location.groupby(['customer_state', 'segment']).size().reset_index(name='count')
-        
-        return {
-            'rfm': rfm,
-            'segment_summary': segment_summary,
-            'rfm_with_location': rfm_with_location,
-            'segment_by_state': segment_by_state,
-            'max_date': max_date
-        }
+# Filter kategori produk
+with st.sidebar.expander("🏷️ Kategori Produk", expanded=True):
+    # Check if translated categories are available
+    if 'product_category_name_english' in data['products'].columns:
+        categories = ['All Categories'] + sorted(data['products']['product_category_name_english'].dropna().unique().tolist())
+    else:
+        categories = ['All Categories'] + sorted(data['products']['product_category_name'].dropna().unique().tolist())
     
-    rfm_data = prepare_rfm_data()
+    selected_category = st.selectbox("Pilih Kategori Produk:", categories)
     
-    # Menampilkan ikhtisar RFM
-    st.subheader("Ikhtisar Analisis RFM")
+    if selected_category == 'All Categories':
+        selected_category = None
+
+# Filter negara bagian untuk analisis geografis
+with st.sidebar.expander("🌎 Lokasi Geografis", expanded=True):
+    states = ['All States'] + sorted(data['customers']['customer_state'].unique().tolist())
+    selected_state = st.selectbox("Pilih Negara Bagian:", states)
     
+    if selected_state == 'All States':
+        selected_state = None
+
+# ---- Tab layout untuk berbagai analisis ----
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📊 Tren Penjualan", 
+    "👥 Analisis Pelanggan", 
+    "💳 Metode Pembayaran", 
+    "🚚 Performa Pengiriman",
+    "🌎 Analisis Geografis"
+])
+
+# ----- Tab 1: Tren Penjualan -----
+with tab1:
+    st.header("📊 Analisis Tren Penjualan")
+    
+    # Filter orders berdasarkan tanggal
+    filtered_orders = data['orders'][(data['orders']['order_purchase_timestamp'] >= start_date) & 
+                                (data['orders']['order_purchase_timestamp'] <= end_date)]
+    
+    # Gabungkan dengan items
+    filtered_items = pd.merge(
+        filtered_orders[['order_id']],
+        data['order_items'],
+        on='order_id',
+        how='inner'
+    )
+    
+    # Filter berdasarkan kategori jika ditentukan
+    if selected_category:
+        product_ids = data['products'][data['products']['product_category_name_english'] == selected_category]['product_id'].unique()
+        filtered_items = filtered_items[filtered_items['product_id'].isin(product_ids)]
+    
+    # Metrik utama dalam 3 kolom
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.metric("Total Pelanggan", f"{len(rfm_data['rfm']):,}")
-        
+        total_orders = filtered_items['order_id'].nunique()
+        st.metric("Total Pesanan", f"{total_orders:,}")
+    
     with col2:
-        st.metric("Tanggal Transaksi Terakhir", rfm_data['max_date'].strftime('%Y-%m-%d'))
-        
+        total_sales = filtered_items['price'].sum()
+        st.metric("Total Penjualan", f"R$ {total_sales:,.2f}")
+    
     with col3:
-        st.metric("Total Pendapatan", f"R$ {rfm_data['rfm']['monetary'].sum():,.2f}")
+        avg_order_value = total_sales / total_orders if total_orders > 0 else 0
+        st.metric("Rata-rata Nilai Pesanan", f"R$ {avg_order_value:,.2f}")
     
-    # Segmen pelanggan
-    st.subheader("Segmentasi Pelanggan")
+    # Grafik tren penjualan dari waktu ke waktu
+    st.subheader("Tren Penjualan dari Waktu ke Waktu")
     
-    # Distribusi segmen
-    segment_counts = rfm_data['rfm']['segment'].value_counts().reset_index()
-    segment_counts.columns = ['Segment', 'Count']
+    # Menggabungkan data pesanan dengan waktu
+    sales_over_time = pd.merge(
+        filtered_orders[['order_id', 'order_purchase_timestamp']],
+        filtered_items[['order_id', 'price']],
+        on='order_id',
+        how='inner'
+    )
     
-    col1, col2 = st.columns(2)
+    # Agregasi penjualan per bulan
+    sales_over_time['month'] = sales_over_time['order_purchase_timestamp'].dt.to_period('M')
+    monthly_sales = sales_over_time.groupby(sales_over_time['month'].astype(str))['price'].sum().reset_index()
+    
+    # Plotting
+    fig = px.line(
+        monthly_sales, 
+        x='month', 
+        y='price',
+        title='Tren Penjualan Bulanan',
+        labels={'month': 'Bulan', 'price': 'Total Penjualan (R$)'}
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Top kategori berdasarkan penjualan
+    st.subheader("Top Kategori Produk Berdasarkan Penjualan")
+    
+    # Menggabungkan data item dengan produk
+    items_with_categories = pd.merge(
+        filtered_items,
+        data['products'][['product_id', 'product_category_name', 'product_category_name_english']],
+        on='product_id',
+        how='inner'
+    )
+    
+    # Agregasi berdasarkan kategori
+    cat_column = 'product_category_name_english' if 'product_category_name_english' in items_with_categories.columns else 'product_category_name'
+    category_sales = items_with_categories.groupby(cat_column).agg({
+        'price': 'sum',
+        'order_id': 'nunique'
+    }).reset_index()
+    
+    # Sorting dan mengambil top 10
+    top_categories = category_sales.sort_values('price', ascending=False).head(10)
+    
+    # Plotting
+    fig = px.bar(
+        top_categories,
+        x=cat_column,
+        y='price',
+        title='Top 10 Kategori Berdasarkan Penjualan',
+        labels={cat_column: 'Kategori', 'price': 'Total Penjualan (R$)'}
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+# ----- Tab 2: Analisis Pelanggan -----
+with tab2:
+    st.header("👥 Analisis Segmentasi Pelanggan")
+    
+    st.info("""
+    **RFM Analysis** adalah teknik segmentasi pelanggan berdasarkan perilaku pembelian:
+    - **Recency**: Berapa hari sejak pembelian terakhir
+    - **Frequency**: Berapa kali pelanggan melakukan pembelian
+    - **Monetary**: Berapa total nilai pembelian pelanggan
+    
+    Analisis lengkap tersedia di notebook.ipynb.
+    """)
+    
+    # Filter orders berdasarkan tanggal untuk RFM
+    filtered_orders_rfm = data['orders'][
+        (data['orders']['order_purchase_timestamp'] >= start_date) & 
+        (data['orders']['order_purchase_timestamp'] <= end_date) &
+        (data['orders']['order_status'] == 'delivered')
+    ]
+    
+    # Gabungkan dengan pembayaran
+    orders_with_payments = pd.merge(
+        filtered_orders_rfm[['order_id', 'customer_id', 'order_purchase_timestamp']],
+        data['order_payments'][['order_id', 'payment_value']],
+        on='order_id',
+        how='inner'
+    )
+    
+    if len(orders_with_payments) > 0:
+        # Hitung RFM metrics
+        # Recency
+        recency_df = orders_with_payments.groupby('customer_id')['order_purchase_timestamp'].max().reset_index()
+        recency_df['recency'] = (end_date - recency_df['order_purchase_timestamp']).dt.days
+        
+        # Frequency
+        frequency_df = orders_with_payments.groupby('customer_id')['order_id'].nunique().reset_index()
+        frequency_df.columns = ['customer_id', 'frequency']
+        
+        # Monetary
+        monetary_df = orders_with_payments.groupby('customer_id')['payment_value'].sum().reset_index()
+        monetary_df.columns = ['customer_id', 'monetary']
+        
+        # Combine
+        rfm = pd.merge(recency_df[['customer_id', 'recency']], frequency_df, on='customer_id')
+        rfm = pd.merge(rfm, monetary_df, on='customer_id')
+        
+        # Display metrics
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            avg_recency = rfm['recency'].mean()
+            st.metric("Rata-rata Recency", f"{avg_recency:.1f} hari")
+        
+        with col2:
+            avg_frequency = rfm['frequency'].mean()
+            st.metric("Rata-rata Frequency", f"{avg_frequency:.1f} pesanan")
+        
+        with col3:
+            avg_monetary = rfm['monetary'].mean()
+            st.metric("Rata-rata Monetary", f"R$ {avg_monetary:.2f}")
+        
+        # Create segments - Penanganan khusus untuk recency
+        if rfm['recency'].nunique() < 5:
+            # Jika tidak cukup variasi, tetapkan nilai tengah
+            rfm['r_score'] = 3
+        else:
+            try:
+                rfm['r_score'] = pd.qcut(rfm['recency'], q=5, labels=[5, 4, 3, 2, 1], duplicates='drop')
+            except ValueError:
+                rfm['r_score'] = pd.cut(rfm['recency'], bins=5, labels=[5, 4, 3, 2, 1], duplicates='drop')
+        
+        # Penanganan untuk frequency
+        if rfm['frequency'].nunique() < 5:
+            rfm['f_score'] = 3
+        else:
+            try:
+                rfm['f_score'] = pd.qcut(rfm['frequency'].rank(method='first'), q=5, labels=[1, 2, 3, 4, 5], duplicates='drop')
+            except ValueError:
+                rfm['f_score'] = pd.cut(rfm['frequency'], bins=5, labels=[1, 2, 3, 4, 5], duplicates='drop')
+        
+        # Penanganan untuk monetary
+        if rfm['monetary'].nunique() < 5:
+            rfm['m_score'] = 3
+        else:
+            try:
+                rfm['m_score'] = pd.qcut(rfm['monetary'].rank(method='first'), q=5, labels=[1, 2, 3, 4, 5], duplicates='drop')
+            except ValueError:
+                rfm['m_score'] = pd.cut(rfm['monetary'], bins=5, labels=[1, 2, 3, 4, 5], duplicates='drop')
+        
+        # Convert score columns to numeric
+        for col in ['r_score', 'f_score', 'm_score']:
+            rfm[col] = pd.to_numeric(rfm[col], errors='coerce')
+        
+        # Calculate overall RFM score
+        rfm['rfm_score'] = rfm['r_score'] + rfm['f_score'] + rfm['m_score']
+        
+        # Create segment labels
+        rfm['segment'] = pd.cut(
+            rfm['rfm_score'],
+            bins=[0, 4, 8, 12, 15],
+            labels=['Bronze', 'Silver', 'Gold', 'Platinum'],
+            include_lowest=True
+        )
+        
+        # Visualize segment distribution
+        segment_dist = rfm['segment'].value_counts().reset_index()
+        segment_dist.columns = ['segment', 'count']
+        
+        fig = px.pie(
+            segment_dist, 
+            values='count', 
+            names='segment',
+            title='Distribusi Segmen Pelanggan',
+            color='segment',
+            color_discrete_map={
+                'Bronze': '#CD7F32',
+                'Silver': '#C0C0C0',
+                'Gold': '#FFD700',
+                'Platinum': '#E5E4E2'
+            }
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Add explanation of segments
+        st.subheader("Interpretasi Segmen Pelanggan")
+        
+        segments_table = pd.DataFrame({
+            'Segmen': ['Platinum', 'Gold', 'Silver', 'Bronze'],
+            'Deskripsi': [
+                'Pelanggan dengan nilai tertinggi yang sering berbelanja dan baru-baru ini melakukan pembelian.',
+                'Pelanggan bernilai tinggi yang cenderung berbelanja secara teratur.',
+                'Pelanggan menengah yang berbelanja sesekali atau pelanggan baru dengan nilai pembelian tinggi.',
+                'Pelanggan yang jarang berbelanja dan sudah lama tidak melakukan pembelian.'
+            ],
+            'Strategi Marketing': [
+                'Program loyalitas VIP, akses awal ke produk baru, personalisasi layanan.',
+                'Cross-selling dan up-selling, program rewards, insentif untuk meningkatkan frekuensi.',
+                'Promosi produk terkait, program engagement, insentif untuk meningkatkan frekuensi.',
+                'Program reaktivasi, diskon khusus untuk pembelian berikutnya, penawaran win-back.'
+            ]
+        })
+        
+        st.table(segments_table)
+    else:
+        st.warning("Tidak ada data yang cukup untuk analisis RFM dalam rentang waktu yang dipilih.")
+
+# ----- Tab 3: Metode Pembayaran -----
+with tab3:
+    st.header("💳 Analisis Metode Pembayaran")
+    
+    # Filter orders berdasarkan rentang tanggal
+    filtered_orders_payment = data['orders'][(data['orders']['order_purchase_timestamp'] >= start_date) & 
+                                         (data['orders']['order_purchase_timestamp'] <= end_date)]
+    
+    # Gabungkan dengan data pembayaran
+    payment_data = pd.merge(
+        filtered_orders_payment[['order_id']],
+        data['order_payments'],
+        on='order_id',
+        how='inner'
+    )
+    
+    # Agregasi berdasarkan jenis pembayaran
+    payment_summary = payment_data.groupby('payment_type').agg({
+        'payment_value': 'sum',
+        'order_id': 'nunique'
+    }).reset_index()
+    
+    payment_summary.columns = ['payment_type', 'total_value', 'order_count']
+    payment_summary['percentage'] = payment_summary['total_value'] / payment_summary['total_value'].sum() * 100
+    
+    # Visualisasi distribusi metode pembayaran
+    col1, col2 = st.columns([2, 1])
     
     with col1:
-        fig18 = px.pie(
-            segment_counts,
-            values='Count',
-            names='Segment',
-            title="Distribusi Segmen Pelanggan",
-            color_discrete_sequence=px.colors.qualitative.Set3,
+        fig = px.pie(
+            payment_summary, 
+            values='total_value', 
+            names='payment_type',
+            title='Distribusi Metode Pembayaran',
             hole=0.4
         )
-        st.plotly_chart(fig18, use_container_width=True, key="segment_distribution")
         
+        fig.update_traces(
+            textposition='inside', 
+            textinfo='percent+label',
+            hovertemplate='<b>%{label}</b><br>Value: R$%{value:,.2f}<br>Percentage: %{percent}<extra></extra>'
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    
     with col2:
-        fig19 = px.bar(
-            rfm_data['segment_summary'],
-            x='segment',
-            y='customer_id',
-            title="Jumlah Pelanggan berdasarkan Segmen",
-            color='segment',
-            labels={'customer_id': 'Jumlah Pelanggan', 'segment': 'Segmen'}
-        )
-        st.plotly_chart(fig19, use_container_width=True, key="segment_counts")
+        # Statistik pembayaran
+        st.subheader("Statistik Metode Pembayaran")
+        
+        # Format untuk tampilan
+        display_stats = payment_summary.copy()
+        display_stats['avg_value'] = display_stats['total_value'] / display_stats['order_count']
+        display_stats = display_stats[['payment_type', 'order_count', 'avg_value']]
+        display_stats.columns = ['Metode Pembayaran', 'Jumlah Pesanan', 'Rata-rata Nilai']
+        display_stats['Rata-rata Nilai'] = display_stats['Rata-rata Nilai'].map('R$ {:.2f}'.format)
+        
+        st.table(display_stats)
     
-    # Karakteristik segmen
-    st.subheader("Karakteristik Segmen")
+    # Analisis cicilan pembayaran kartu kredit
+    st.subheader("Analisis Pembayaran Cicilan")
     
-    # Metrik rata-rata berdasarkan segmen
-    fig20 = px.bar(
-        rfm_data['segment_summary'],
-        x='segment',
-        y=['recency', 'frequency', 'monetary'],
-        barmode='group',
-        title="Metrik RFM Rata-rata berdasarkan Segmen",
-        labels={'value': 'Nilai Rata-rata', 'segment': 'Segmen', 'variable': 'Metrik'}
-    )
-    st.plotly_chart(fig20, use_container_width=True, key="segment_metrics")
+    # Filter hanya metode pembayaran credit_card
+    credit_data = payment_data[payment_data['payment_type'] == 'credit_card']
     
-    # Fokus pada segmen bernilai tinggi
-    st.subheader("Fokus pada Segmen Bernilai Tinggi")
-    
-    high_value_segments = ['Champions', 'Loyal Customers']
-    high_value_data = rfm_data['rfm'][rfm_data['rfm']['segment'].isin(high_value_segments)]
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.metric(
-            "Pelanggan Champion", 
-            f"{len(rfm_data['rfm'][rfm_data['rfm']['segment'] == 'Champions']):,}",
-            f"{len(rfm_data['rfm'][rfm_data['rfm']['segment'] == 'Champions']) / len(rfm_data['rfm']) * 100:.1f}%"
+    if len(credit_data) > 0:
+        # Distribusi jumlah cicilan
+        installment_counts = credit_data['payment_installments'].value_counts().reset_index()
+        installment_counts.columns = ['installments', 'count']
+        installment_counts = installment_counts.sort_values('installments')
+        
+        fig = px.bar(
+            installment_counts,
+            x='installments',
+            y='count',
+            title='Distribusi Jumlah Cicilan (Kartu Kredit)',
+            labels={'installments': 'Jumlah Cicilan', 'count': 'Jumlah Transaksi'}
         )
         
-    with col2:
-        st.metric(
-            "Pendapatan dari Champion",
-            f"R$ {rfm_data['rfm'][rfm_data['rfm']['segment'] == 'Champions']['monetary'].sum():,.2f}",
-            f"{rfm_data['rfm'][rfm_data['rfm']['segment'] == 'Champions']['monetary'].sum() / rfm_data['rfm']['monetary'].sum() * 100:.1f}%"
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Rata-rata nilai pembelian berdasarkan jumlah cicilan
+        installment_values = credit_data.groupby('payment_installments')['payment_value'].mean().reset_index()
+        installment_values.columns = ['installments', 'avg_value']
+        
+        fig = px.line(
+            installment_values,
+            x='installments',
+            y='avg_value',
+            title='Rata-rata Nilai Pembelian Berdasarkan Jumlah Cicilan',
+            labels={'installments': 'Jumlah Cicilan', 'avg_value': 'Rata-rata Nilai (R$)'},
+            markers=True
         )
-    
-    # Distribusi geografis segmen
-    st.subheader("Distribusi Geografis Segmen")
-    
-    # Negara bagian teratas untuk Champions
-    champions_by_state = rfm_data['segment_by_state'][rfm_data['segment_by_state']['segment'] == 'Champions']
-    champions_by_state = champions_by_state.sort_values('count', ascending=False)
-    
-    fig21 = px.bar(
-        champions_by_state.head(10),
-        x='customer_state',
-        y='count',
-        title="10 Negara Bagian dengan Pelanggan Champion Terbanyak",
-        color='count',
-        labels={'customer_state': 'Negara Bagian', 'count': 'Jumlah Pelanggan Champion'}
-    )
-    st.plotly_chart(fig21, use_container_width=True, key="champions_by_state")
-    
-    # Menampilkan tabel data
-    with st.expander("Lihat Tabel Data"):
-        st.write("Ringkasan Segmen")
-        st.dataframe(rfm_data['segment_summary'])
         
-        st.write("Karakteristik Pelanggan Champion")
-        st.dataframe(rfm_data['rfm'][rfm_data['rfm']['segment'] == 'Champions'].describe())
-        
-        st.write("Distribusi Champion berdasarkan Negara Bagian")
-        st.dataframe(champions_by_state.head(10))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Tidak ada data pembayaran kartu kredit dalam periode yang dipilih.")
 
-# Fungsi utama untuk menjalankan aplikasi
-if __name__ == "__main__":
-    st.sidebar.info("Dibuat dengan ❤️ menggunakan Streamlit")
-    st.sidebar.markdown("---")
-    st.sidebar.write("### Tentang Dashboard Ini")
-    st.sidebar.write("""
-    Dashboard ini menyediakan analisis komprehensif untuk data e-commerce Brasil dari Olist, 
-    menampilkan pola geografis, kinerja penjual, metode pembayaran, dan segmentasi pelanggan.
-    """)
+# ----- Tab 4: Performa Pengiriman -----
+with tab4:
+    st.header("🚚 Analisis Performa Pengiriman")
+    
+    # Filter orders berdasarkan rentang tanggal dan status terkirim
+    delivery_data = data['orders'][
+        (data['orders']['order_purchase_timestamp'] >= start_date) & 
+        (data['orders']['order_purchase_timestamp'] <= end_date) &
+        (data['orders']['order_status'] == 'delivered')
+    ].copy()
+    
+    # Filter out rows with missing delivery dates
+    delivery_data = delivery_data.dropna(subset=['order_delivered_customer_date', 'order_estimated_delivery_date'])
+    
+    if len(delivery_data) > 0:
+        # Hitung selisih waktu antara estimasi dan aktual pengiriman
+        delivery_data['delivery_difference'] = (delivery_data['order_delivered_customer_date'] - 
+                                               delivery_data['order_estimated_delivery_date']).dt.days
+        
+        # Definisi kategori ketepatan waktu
+        delivery_data['delivery_status'] = pd.cut(
+            delivery_data['delivery_difference'],
+            bins=[-float('inf'), -3, -1, 0, 2, float('inf')],
+            labels=['Very Early', 'Early', 'On Time', 'Late', 'Very Late']
+        )
+        
+        # Agregasi berdasarkan status pengiriman
+        delivery_summary = delivery_data['delivery_status'].value_counts().reset_index()
+        delivery_summary.columns = ['delivery_status', 'count']
+        
+        # Urutkan berdasarkan kategori
+        status_order = ['Very Early', 'Early', 'On Time', 'Late', 'Very Late']
+        delivery_summary['delivery_status'] = pd.Categorical(
+            delivery_summary['delivery_status'], 
+            categories=status_order, 
+            ordered=True
+        )
+        delivery_summary = delivery_summary.sort_values('delivery_status')
+        
+        # Warna untuk setiap kategori
+        color_map = {
+            'Very Early': 'darkgreen',
+            'Early': 'green',
+            'On Time': 'lightgreen',
+            'Late': 'orange',
+            'Very Late': 'red'
+        }
+        
+        # Visualisasi distribusi status pengiriman
+        fig = px.bar(
+            delivery_summary, 
+            x='delivery_status', 
+            y='count',
+            title='Analisis Performa Pengiriman',
+            color='delivery_status',
+            color_discrete_map=color_map,
+            labels={'delivery_status': 'Status Pengiriman', 'count': 'Jumlah Pesanan'}
+        )
+        
+        fig.update_layout(
+            xaxis_title='Status Pengiriman',
+            yaxis_title='Jumlah Pesanan'
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Metrik pengiriman
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # Hitung waktu pengiriman actual
+            delivery_data['actual_delivery_days'] = (delivery_data['order_delivered_customer_date'] - 
+                                                   delivery_data['order_purchase_timestamp']).dt.days
+            avg_delivery_time = delivery_data['actual_delivery_days'].mean()
+            st.metric("Rata-rata Waktu Pengiriman", f"{avg_delivery_time:.1f} hari")
+        
+        with col2:
+            # Hitung waktu pengiriman estimasi
+            delivery_data['estimated_delivery_days'] = (delivery_data['order_estimated_delivery_date'] - 
+                                                      delivery_data['order_purchase_timestamp']).dt.days
+            avg_estimated_time = delivery_data['estimated_delivery_days'].mean()
+            st.metric("Rata-rata Estimasi Pengiriman", f"{avg_estimated_time:.1f} hari")
+        
+        with col3:
+            # Hitung persentase tepat waktu
+            on_time_percentage = (delivery_data['delivery_difference'] <= 0).mean() * 100
+            st.metric("Persentase Tepat Waktu", f"{on_time_percentage:.1f}%")
+        
+        # Distribusi waktu pengiriman
+        st.subheader("Distribusi Waktu Pengiriman")
+        
+        fig = px.histogram(
+            delivery_data,
+            x='actual_delivery_days',
+            nbins=20,
+            title='Distribusi Waktu Pengiriman (Hari)',
+            labels={'actual_delivery_days': 'Waktu Pengiriman (Hari)'}
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Tidak ada data pengiriman yang cukup untuk analisis dalam periode yang dipilih.")
+
+# ----- Tab 5: Analisis Geografis -----
+with tab5:
+    st.header("🌎 Analisis Geografis")
+    
+    # Distribusi pelanggan berdasarkan negara bagian
+    customer_states = data['customers']['customer_state'].value_counts().reset_index()
+    customer_states.columns = ['state', 'customer_count']
+    
+    # Filter berdasarkan state jika dipilih
+    if selected_state:
+        customer_states = customer_states[customer_states['state'] == selected_state]
+    
+    # Buat peta Brazil
+    brazil_map = folium.Map(location=[-14.235, -51.9253], zoom_start=4, tiles="CartoDB positron")
+    
+    # Tambahkan GeoJson dari Brazil
+    folium.Choropleth(
+        geo_data='https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/brazil-states.geojson',
+        name='choropleth',
+        data=customer_states,
+        columns=['state', 'customer_count'],
+        key_on='feature.properties.sigla',
+        fill_color='YlOrRd',
+        fill_opacity=0.7,
+        line_opacity=0.2,
+        legend_name='Customer Count'
+    ).add_to(brazil_map)
+    
+    folium.LayerControl().add_to(brazil_map)
+    
+    # Tampilkan peta
+    st.subheader("Distribusi Pelanggan berdasarkan Negara Bagian")
+    folium_static(brazil_map)
+    
+    # Visualisasi jumlah pelanggan per negara bagian dengan grafik batang
+    st.subheader("Jumlah Pelanggan per Negara Bagian")
+    
+    if not selected_state:
+        # Sorting state berdasarkan jumlah pelanggan
+        sorted_states = customer_states.sort_values('customer_count', ascending=False)
+        
+        fig = px.bar(
+            sorted_states,
+            x='state',
+            y='customer_count',
+            title='Distribusi Pelanggan berdasarkan Negara Bagian',
+            labels={'state': 'Negara Bagian', 'customer_count': 'Jumlah Pelanggan'},
+            color='customer_count'
+        )
+        
+        fig.update_layout(xaxis={'categoryorder':'total descending'})
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        # Jika state dipilih, tampilkan distribusi kota
+        city_counts = data['customers'][data['customers']['customer_state'] == selected_state]['customer_city'].value_counts().reset_index()
+        city_counts.columns = ['city', 'count']
+        top_cities = city_counts.head(10)
+        
+        fig = px.bar(
+            top_cities,
+            x='city',
+            y='count',
+            title=f'Top 10 Kota di {selected_state} berdasarkan Jumlah Pelanggan',
+            labels={'city': 'Kota', 'count': 'Jumlah Pelanggan'},
+            color='count'
+        )
+        
+        fig.update_layout(xaxis={'categoryorder':'total descending'})
+        st.plotly_chart(fig, use_container_width=True)
+
+# Tampilkan informasi tentang notebook analisis
+st.markdown("---")
+st.info("""
+**Catatan:** Dashboard ini hanya menampilkan sebagian hasil analisis yang telah dilakukan dalam notebook.ipynb. 
+Untuk melihat analisis lengkap termasuk RFM analysis, clustering, visualisasi lanjutan, dan insight bisnis, 
+silakan buka dan jalankan notebook.ipynb.
+
+Notebook berisi analisis mendalam tentang:
+- Segmentasi pelanggan dengan RFM analysis
+- Analisis geografis penjualan
+- Pola pembelian berdasarkan waktu
+- Analisis review dan rating produk
+- Performa pengiriman
+""")
+
+st.markdown("""
+<div style="text-align: center">
+    <p>Olist E-commerce Analytics Dashboard | Dibuat dengan Streamlit</p>
+</div>
+""", unsafe_allow_html=True)
